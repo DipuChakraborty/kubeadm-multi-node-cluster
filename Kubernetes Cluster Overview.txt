@@ -1,0 +1,313 @@
+Kubernetes Cluster Overview
+________________________________________
+What This Project Is
+This project is a manually built Kubernetes cluster using kubeadm on Ubuntu Linux.
+It is designed to understand how Kubernetes works under the hood (not using managed services like EKS or GKE).
+________________________________________
+Cluster Architecture
+•	1 Master Node (Control Plane)
+•	2 Worker Nodes
+Master Node
+192.168.40.131
+|
+|---- Worker Node 1 (192.168.40.132)
+|
+|---- Worker Node 2 (192.168.40.133)
+________________________________________
+Technologies Used
+•	Kubernetes (kubeadm, kubelet, kubectl)
+•	containerd (container runtime)
+•	Calico (networking plugin)
+•	Ubuntu 24.04 LTS
+•	Linux system tools
+________________________________________
+Main Goal
+To build a fully working Kubernetes cluster from scratch including:
+•	Node setup
+•	Networking setup
+•	Container runtime configuration
+•	Cluster initialization
+•	Worker node joining
+________________________________________
+What This Cluster Can Do
+•	Run containerized applications (Pods)
+•	Schedule workloads across multiple nodes
+•	Provide networking between containers
+•	Support namespaces for isolation
+Example workload:
+•	nginx deployment running across worker nodes
+________________________________________
+Key Output
+After setup:
+•	All nodes become Ready
+•	Pods run successfully
+•	Kubernetes system components run in kube-system namespace
+kubectl get nodes
+kubectl get pods -n kube-system
+________________________________________
+Why This Project Matters
+It demonstrates real infrastructure understanding:
+•	Linux administration
+•	Networking concepts
+•	Container runtime configuration
+•	Distributed system setup
+________________________________________
+Purpose
+Prepare all machines (Master + Worker nodes) for Kubernetes installation.
+________________________________________
+1. Set Hostnames
+Each node must have a unique name.
+sudo hostnamectl set-hostname k8s-master
+sudo hostnamectl set-hostname node1u
+sudo hostnamectl set-hostname node2u
+________________________________________
+2. Update /etc/hosts
+Enable communication between nodes using hostnames.
+192.168.40.131 master
+192.168.40.132 node1u
+192.168.40.133 node2u
+________________________________________
+3. Disable Swap (Required)
+Kubernetes does not work with swap enabled.
+sudo swapoff -a
+sudo sed -i '/ swap / s/^/#/' /etc/fstab
+________________________________________
+4. Load Kernel Modules
+Required for container networking.
+sudo modprobe overlay
+sudo modprobe br_netfilter
+Make permanent:
+cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+________________________________________
+5. Sysctl Network Settings
+Enable packet forwarding and bridge networking.
+cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+EOF
+
+sudo sysctl --system
+________________________________________
+Result
+After this step:
+•	Nodes can communicate
+•	Kernel is Kubernetes-ready
+•	Network rules are enabled
+•	Swap is disabled
+________________________________________
+Importance
+Without this step:
+•	Pods will not communicate
+•	Nodes may stay NotReady
+•	Cluster initialization will fail
+Kubernetes Container Runtime Setup (one Page)
+Kubernetes Container Runtime Setup (Simple)
+________________________________________
+Purpose
+Install and configure container runtime used by Kubernetes to run containers.
+________________________________________
+1. Install containerd
+Container runtime used instead of Docker.
+sudo apt update
+sudo apt install -y containerd
+________________________________________
+2. Create Default Configuration
+Generate base config file.
+sudo mkdir -p /etc/containerd
+containerd config default | sudo tee /etc/containerd/config.toml
+________________________________________
+3. Enable Systemd Cgroup (IMPORTANT)
+Kubernetes requires systemd for resource management.
+Edit config:
+SystemdCgroup = true
+________________________________________
+4. Restart containerd
+Apply configuration changes.
+sudo systemctl restart containerd
+sudo systemctl enable containerd
+________________________________________
+5. Verify Runtime
+Check service status and version.
+systemctl status containerd
+ctr version
+ctr info
+________________________________________
+Result
+After setup:
+•	container runtime is active
+•	Kubernetes can launch pods
+•	systemd integration enabled
+________________________________________
+Importance
+Without this:
+•	kubelet cannot start pods
+•	cluster will remain NotReady
+•	scheduling will fail
+Kubernetes Installation (kubeadm Setup One Page)
+Kubernetes Installation (Simple)
+________________________________________
+Purpose
+Install Kubernetes core components on all nodes.
+________________________________________
+1. Install Dependencies
+Required tools for secure package installation.
+sudo apt install -y apt-transport-https ca-certificates curl gpg
+________________________________________
+2. Add Kubernetes Repository
+Add official Kubernetes package source.
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key |
+sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+________________________________________
+3. Add Repo to APT
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' |
+sudo tee /etc/apt/sources.list.d/kubernetes.list
+________________________________________
+4. Install Kubernetes Tools
+sudo apt update
+sudo apt install -y kubelet kubeadm kubectl
+________________________________________
+5. Hold Versions
+Prevent automatic updates.
+sudo apt-mark hold kubelet kubeadm kubectl
+________________________________________
+6. Enable kubelet
+sudo systemctl enable --now kubelet
+________________________________________
+Result
+After this:
+•	Kubernetes tools installed
+•	Nodes ready for cluster join
+•	kubelet service active
+________________________________________
+Importance
+Without this:
+•	cluster cannot be created
+•	nodes cannot join master
+•	kubectl cannot manage cluster
+Kubernetes Cluster Initialization (master Setup One Page)
+Kubernetes Cluster Initialization (Master Setup)
+________________________________________
+Purpose
+Initialize Kubernetes control plane on master node.
+________________________________________
+1. Initialize Cluster
+Run ONLY on master node.
+sudo kubeadm init \
+--apiserver-advertise-address=192.168.40.131 \
+--pod-network-cidr=10.244.0.0/16
+________________________________________
+2. Configure kubectl Access
+Enable cluster management access.
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+________________________________________
+3. Install Network Plugin (Calico)
+Enable pod networking.
+kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+________________________________________
+4. Generate Join Command (if needed)
+kubeadm token create --print-join-command
+________________________________________
+Result
+After this step:
+•	Control plane becomes active
+•	API server runs on master
+•	Cluster becomes operational
+________________________________________
+Importance
+Without this:
+•	cluster does not exist
+•	worker nodes cannot join
+•	kubectl cannot function
+Kubernetes Worker Node Join Process (one Page)
+Kubernetes Worker Node Join Process
+________________________________________
+Purpose
+Connect worker nodes to Kubernetes control plane.
+________________________________________
+1. Reset Node (if needed)
+Clean previous cluster state.
+sudo kubeadm reset -f
+sudo rm -rf /etc/kubernetes/
+sudo rm -rf /var/lib/kubelet/
+sudo rm -rf /etc/cni/net.d/
+________________________________________
+2. Ensure kubelet is enabled
+sudo systemctl enable kubelet
+sudo systemctl restart kubelet
+________________________________________
+3. Join Cluster
+Run on worker node.
+sudo kubeadm join 192.168.40.131:6443 \
+--token <token> \
+--discovery-token-ca-cert-hash sha256:<hash>
+________________________________________
+4. Verify from Master
+kubectl get nodes -o wide
+________________________________________
+Result
+After successful join:
+•	Node becomes part of cluster
+•	Node status becomes Ready
+•	Workloads can be scheduled
+________________________________________
+Importance
+Without this:
+•	cluster remains single-node
+•	no workload distribution
+•	no high availability
+Kubernetes Hands-on Testing & Validation (one Page)
+Kubernetes Hands-on Testing & Validation
+________________________________________
+Purpose
+Verify cluster is working correctly after setup.
+________________________________________
+1. Check Cluster Nodes
+kubectl get nodes -o wide
+________________________________________
+2. Check System Pods
+kubectl get pods -n kube-system
+________________________________________
+3. Create Test Pod
+kubectl run nginx --image=nginx
+kubectl get pods -o wide
+________________________________________
+4. Expose Application
+kubectl expose deployment nginx --port=80 --type=NodePort
+kubectl get svc
+________________________________________
+5. Namespaces Test
+kubectl create namespace webapp
+kubectl run test --image=nginx -n webapp
+kubectl get pods -n webapp
+________________________________________
+Result
+After validation:
+•	Cluster runs workloads
+•	Pods are scheduled across nodes
+•	Networking works between services
+________________________________________
+Importance
+This confirms:
+•	cluster is functional
+•	networking is working
+•	scheduling is correct
+________________________________________
+Final Outcome
+A fully working multi-node Kubernetes cluster ready for application deployment
+1.	Cluster Overview 
+2.	Node Preparation 
+3.	Container Runtime Setup 
+4.	Kubernetes Installation 
+5.	Cluster Initialization 
+6.	Worker Node Join 
+7.	Hands-on Testing & Validation 
+8.	Troubleshooting Case 1 
+9.	Troubleshooting Case 2 
+10.	Universal Troubleshooting Template 

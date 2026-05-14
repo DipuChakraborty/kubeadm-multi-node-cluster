@@ -1,0 +1,47 @@
+# FILE: manifests/sample-app.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: sample-webapp
+  namespace: webapp
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: sample-webapp
+
+  template:
+    metadata:
+      labels:
+        app: sample-webapp
+
+    spec:
+      containers:
+      - name: sample-webapp
+        image: nginx:latest
+
+        ports:
+        - containerPort: 80
+
+---
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: sample-webapp-service
+  namespace: webapp
+
+spec:
+  selector:
+    app: sample-webapp
+
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+
+  type: ClusterIP
