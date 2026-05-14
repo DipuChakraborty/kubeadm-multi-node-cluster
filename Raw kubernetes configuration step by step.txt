@@ -1,0 +1,909 @@
+###############################Kubernetes configuration step by step################################
+
+for kubernetes cheatsheet
+https://kubernetes.io/docs/reference/kubectl/quick-reference/
+
+
+
+STEP 1: Configure ALL NODES (Master + Workers)
+
+Master:
+root@master:~# sudo hostnamectl set-hostname k8s-master
+
+Node1:
+root@node1u:~# sudo hostnamectl set-hostname node1u
+
+node2:
+root@node2u:~# sudo hostnamectl set-hostname node2u
+
+root@master:~# apt install iputils-ping -y
+
+Update /etc/hosts (ALL NODES):
+Because Nodes must resolve each other by name
+
+root@k8s-master:~# sudo vim /etc/hosts
+127.0.0.1 localhost
+
+# Kubernetes cluster nodes
+192.168.40.131 master
+192.168.40.132 node1u
+192.168.40.133 node2u
+
+# IPv6
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+
+
+
+root@node1u:~# sudo vim /etc/hosts
+127.0.0.1 localhost
+
+# Kubernetes cluster nodes
+192.168.40.131 master
+192.168.40.132 node1u
+192.168.40.133 node2u
+
+# IPv6
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+
+
+root@node2u:~# sudo vim /etc/hosts
+127.0.0.1 localhost
+
+# Kubernetes cluster nodes
+192.168.40.131 master
+192.168.40.132 node1u
+192.168.40.133 node2u
+
+# IPv6
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+
+
+
+Disable swap (CRITICAL):
+Kubernetes requires swap OFF for stable scheduling
+
+
+root@k8s-master:~# sudo swapoff -a
+Killed
+root@k8s-master:~# vim /etc/fstab
+#/swap.img      none    swap    sw      0       0
+
+
+root@node1u:~# sudo swapoff -a
+Killed
+root@node1u:~# vim /etc/fstab
+#/swap.img      none    swap    sw      0       0
+
+
+root@node2u:~# sudo swapoff -a
+Killed
+root@node2u:~# vim /etc/fstab
+#/swap.img      none    swap    sw      0       0
+
+
+
+
+Enable kernel modules:
+A kernel module (or loadable kernel mode) is an object file that contains code that can extend the 
+kernel functionality at runtime (it is loaded as needed); When a kernel module is no longer needed, 
+it can be unloaded.
+kernel modules is very important for Kubernetes networking and container runtime to work correctly.
+
+
+Load kernel modules (temporary)
+root@k8s-master:~# sudo modprobe overlay                   #It turns on OverlayFS, which lets your system "stack" folders into layers.It is required for Docker and Kubernetes to manage container images.It only stays active until a reboot unless added to a config file.
+root@k8s-master:~# sudo modprobe br_netfilter              #This command enables bridge networking features in your Linux kernel.It is required for Kubernetes to allow traffic to flow correctly between containers.Like the overlay module, it will disappear after a reboot unless saved to a config file.
+
+ensures the modules are automatically loaded after reboot
+root@k8s-master:~# cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+
+Load kernel modules (temporary)
+root@node1u:~# sudo modprobe overlay
+root@node1u:~# sudo modprobe br_netfilter
+
+
+ensures the modules are automatically loaded after reboot
+root@node1u:~# cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+
+Load kernel modules (temporary)
+root@node2u:~# sudo modprobe overlay
+root@node2u:~# sudo modprobe br_netfilter
+
+
+ensures the modules are automatically loaded after reboot
+root@node2u:~# cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+
+Network settings:
+This step is critical for Kubernetes networking to actually work
+This step is Required for pod networking
+
+To Allow bridge network traffic (used by containers) to pass through iptables
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+
+To allow Linux to forward packets between interfaces
+net.ipv4.ip_forward = 1
+
+root@k8s-master:~# cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+root@k8s-master:~# sudo sysctl --system
+
+This command allows your Linux system to route network traffic between containers and the internet.
+It specifically tells the firewall to handle bridge traffic and enables standard IP forwarding.
+root@node1u:~# cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+EOF
+
+This command activates all the network settings you just saved in those configuration files.
+root@node1u:~# sudo sysctl --system
+
+
+root@node2u:~# cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+EOF
+root@node2u:~# sudo sysctl --system
+
+
+Install Container Runtime (containerd):
+
+
+
+root@k8s-master:~# sudo apt update
+root@k8s-master:~# sudo apt install -y containerd
+
+Generate default config
+root@k8s-master:~# sudo mkdir -p /etc/containerd
+
+This command generates the default settings for containerd and saves them to the main configuration file.
+Enable systemd cgroup (VERY IMPORTANT)to manage resources (CPU, memory)
+root@k8s-master:~# containerd config default | sudo tee /etc/containerd/config.toml
+
+Restart containerd:
+root@k8s-master:~# sudo systemctl restart containerd
+sudo systemctl enable containerd
+
+Verify everything is working:
+root@node2u:~# systemctl status containerd
+Active: active (running) since Tue 2026-05-12 15:35:56 UTC; 32s
+
+
+root@k8s-master:~# ctr version
+Client:
+  Version:  2.2.1
+  Revision:
+  Go version: go1.24.4
+
+Server:
+  Version:  2.2.1
+  Revision:
+  UUID: 432c95fb-aac4-4751-86cb-5e8280fa7f8d
+root@k8s-master:~# ctr info
+{
+    "server": {
+        "uuid": "432c95fb-aac4-4751-86cb-5e8280fa7f8d",
+        "pid": 120472,
+        "pidns": 4026531836
+    }
+}
+
+
+root@node1u:~# sudo apt update
+root@node1u:~# sudo apt install -y containerd
+
+Generate default config:
+root@node1u:~# sudo mkdir -p /etc/containerd
+root@node1u:~# containerd config default | sudo tee /etc/containerd/config.toml
+
+Enable systemd cgroup (VERY IMPORTANT)to manage resources (CPU, memory)
+root@node1u:~# containerd config default | sudo tee /etc/containerd/config.toml
+
+Restart containerd:
+root@node1u:~# sudo systemctl restart containerd
+sudo systemctl enable containerd
+
+root@node1u:~# ctr version
+Client:
+  Version:  2.2.1
+  Revision:
+  Go version: go1.24.4
+
+Server:
+  Version:  2.2.1
+  Revision:
+  UUID: 6b3cab79-6e65-4148-8259-dba2e5198f5b
+root@node1u:~# ctr info
+{
+    "server": {
+        "uuid": "6b3cab79-6e65-4148-8259-dba2e5198f5b",
+        "pid": 93052,
+        "pidns": 4026531836
+    }
+}
+root@node1u:~# ctr info
+{
+    "server": {
+        "uuid": "6b3cab79-6e65-4148-8259-dba2e5198f5b",
+        "pid": 93052,
+        "pidns": 4026531836
+    }
+}
+
+
+Verify everything is working:
+root@node2u:~# systemctl status containerd
+
+
+root@node2u:~# sudo apt update
+root@node2u:~# sudo apt install -y containerd
+
+
+Generate default config:
+root@node2u:~# sudo mkdir -p /etc/containerd
+
+Enable systemd cgroup (VERY IMPORTANT)to manage resources (CPU, memory)
+root@node2u:~# containerd config default | sudo tee /etc/containerd/config.toml
+
+
+Restart containerd:
+root@node1u:~# sudo systemctl restart containerd
+sudo systemctl enable containerd
+
+
+Verify everything is working:
+root@node2u:~# systemctl status containerd
+
+
+root@node2u:~# ctr version
+Client:
+  Version:  2.2.1
+  Revision:
+  Go version: go1.24.4
+
+Server:
+  Version:  2.2.1
+  Revision:
+  UUID: 183f87f9-41a0-45d0-b2b9-424f1a644ab9
+root@node2u:~# ctr info
+{
+    "server": {
+        "uuid": "183f87f9-41a0-45d0-b2b9-424f1a644ab9",
+        "pid": 78230,
+        "pidns": 4026531836
+    }
+}
+
+
+
+
+STEP 3: Install Kubernetes (ALL NODES):
+=======================================
+
+Install required packages:
+sudo apt update
+sudo apt install -y apt-transport-https ca-certificates curl gpg
+
+These are support tools:
+
+apt-transport-https → allows APT to use HTTPS repos
+ca-certificates → verifies secure connections
+curl → download Kubernetes repo key
+gpg → verify package authenticity
+
+👉 Without these, Kubernetes repo setup will fail
+
+
+root@k8s-master:~# sudo apt update
+root@k8s-master:~# sudo apt install -y apt-transport-https ca-certificates curl gpg
+
+
+root@node1u:~# sudo apt update
+root@node1u:~# sudo apt install -y apt-transport-https ca-certificates curl gpg
+
+
+root@node2u:~# sudo apt update
+root@node2u:~# sudo apt install -y apt-transport-https ca-certificates curl gpg
+
+
+Add Kubernetes repository (NEW METHOD):
+Create keyring directory. This command creates a secure directory to store the public keys for your software repositories.
+sudo mkdir -p /etc/apt/keyrings
+
+Add GPG key
+This downloads the official Kubernetes security key and converts it into a format Linux can read.
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key \
+| sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+✅ Why this matters
+Ensures packages are trusted and not tampered
+Required by modern Ubuntu (no apt-key anymore)
+
+
+Add repository
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] \
+https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' \
+| sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+
+Install Kubernetes components
+sudo apt update
+sudo apt install -y kubelet kubeadm kubectl
+
+What each component does
+🔹 kubelet (MOST IMPORTANT)
+Runs on every node
+Talks to container runtime (containerd)
+Actually runs Pods
+
+👉 Think of it as:
+“node agent”
+
+🔹 kubeadm
+Used to:
+Initialize master (kubeadm init)
+Join workers (kubeadm join)
+
+👉 Think:
+“cluster setup tool”
+
+🔹 kubectl
+CLI to control cluster
+
+👉 Example:
+
+kubectl get nodes
+
+👉 Think:
+“remote control for Kubernetes”
+
+
+
+Hold package versions (VERY IMPORTANT):
+sudo apt-mark hold kubelet kubeadm kubectl
+
+Prevents:
+
+Automatic upgrades
+Version mismatch between nodes
+
+👉 Kubernetes is VERY sensitive to version differences
+
+Enable kubelet:
+sudo systemctl enable --now kubelet
+
+
+root@k8s-master:~# sudo mkdir -p /etc/apt/keyrings
+
+root@k8s-master:~# curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key \
+| sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+
+his adds the Kubernetes repository to your system's list of software sources.It tells the 
+package manager exactly where to find and download kubelet, kubeadm, and kubectl.The signed-by 
+part ensures the system uses the GPG key you just saved to verify the software.
+root@k8s-master:~# echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+
+root@k8s-master:~# vim /etc/apt/sources.list.d/kubernetes.list
+Add
+deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /
+wq!
+root@k8s-master:~# sudo apt update
+root@k8s-master:~# sudo apt install -y kubelet kubeadm kubectl
+root@k8s-master:~# sudo apt-mark hold kubelet kubeadm kubectl
+root@k8s-master:~# sudo systemctl enable --now kubelet
+
+
+root@node1u:~# sudo mkdir -p /etc/apt/keyrings
+root@node1u:~# curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key \
+| sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+root@node1u:~# echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+
+root@node1u:~# vim /etc/apt/sources.list.d/kubernetes.list
+deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /
+
+root@node1u:~# sudo apt update
+root@node1u:~# sudo apt install -y kubelet kubeadm kubectl
+root@node1u:~# sudo apt-mark hold kubelet kubeadm kubectl
+root@node1u:~# sudo systemctl enable --now kubelet
+
+
+
+
+root@node2u:~# sudo mkdir -p /etc/apt/keyrings
+root@node2u:~# curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.35/deb/Release.key \
+| sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+root@node2u:~# echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+
+
+root@node2u:~# vim /etc/apt/sources.list.d/kubernetes.list
+deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.35/deb/ /
+
+root@node2u:~# sudo apt update
+root@node2u:~# sudo apt install -y kubelet kubeadm kubectl
+root@node2u:~# sudo apt-mark hold kubelet kubeadm kubectl
+root@node2u:~# sudo systemctl enable --now kubelet
+
+
+
+
+STEP 4: Initialize MASTER NODE:
+================================
+
+👉 Run ONLY on 192.168.40.131:
+
+This command launches your cluster by setting up the master node.It uses 192.168.40.131 as the main control 
+point for all communication.It reserves a private IP range (10.244.0.0/16) specifically for your pods.It 
+creates the security certificates and the "join" code needed for worker nodes.
+sudo kubeadm init \
+--apiserver-advertise-address=192.168.40.131 \
+--pod-network-cidr=10.244.0.0/16
+
+👉 Explanation:
+
+--apiserver-advertise-address: Master IP
+--pod-network-cidr: required for CNI (Flannel/Calico)
+
+
+Configure kubectl (MASTER only)
+mkdir -p $HOME/.kube
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+STEP 5: Install Network Plugin (Calico)
+kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+
+Without this, nodes stay NotReady
+
+
+
+root@k8s-master:~# sudo kubeadm init --apiserver-advertise-address=192.168.40.131 --pod-network-cidr=10.244.0.0/16
+[preflight] Some fatal errors occurred:
+        [ERROR Port-10259]: Port 10259 is in use
+        [ERROR Port-10257]: Port 10257 is in use
+        [ERROR Port-10250]: Port 10250 is in use
+error: error execution phase preflight: preflight checks failed
+
+if error occuer first check first
+Confirm what is holding the ports
+root@k8s-master:~# sudo ss -tulpn | grep -E '10250|10257|10259'
+tcp   LISTEN 0      4096               *:10250            *:*    users:(("kubelite",pid=191922,fd=91))
+tcp   LISTEN 0      4096               *:10257            *:*    users:(("kubelite",pid=191922,fd=104))
+tcp   LISTEN 0      4096               *:10259            *:*    users:(("kubelite",pid=191922,fd=103))
+
+Find what installed kubelite
+root@k8s-master:~# ps -fp 191922
+UID          PID    PPID  C STIME TTY          TIME CMD
+root      191922       1 17 07:45 ?        00:02:09 /snap/microk8s/8697/kubelite
+
+microk8s (snap version)
+└── kubelite process
+
+root@k8s-master:~# sudo systemctl stop snap.microk8s.daemon-kubelite
+root@k8s-master:~# sudo systemctl disable snap.microk8s.daemon-kubelite
+Verify ports are free:
+root@k8s-master:~# sudo ss -tulpn | grep -E '10250|10257|10259'
+
+check:
+root@k8s-master:~# snap list | grep kube
+root@k8s-master:~# snap list | grep microk8s
+
+
+Stop microk8s:
+root@k8s-master:~# sudo microk8s stop
+Stopped.
+Stopped.
+
+Remove microk
+root@k8s-master:~# sudo snap remove microk8s
+microk8s removed (snap data snapshot saved)
+
+Kill remaining kubelite
+root@k8s-master:~# sudo kill -9 191922
+
+Clean leftovers
+root@k8s-master:~# sudo rm -rf /var/snap/microk8s
+sudo rm -rf /etc/kubernetes
+sudo rm -rf /var/lib/kubelet
+sudo rm -rf /var/lib/etcd
+
+Restart system services
+root@k8s-master:~# sudo systemctl restart containerd
+
+VERIFY CLEAN STATE
+root@k8s-master:~# ps aux | grep kubelite
+root      211019  0.0  0.1   6544  2332 pts/1    S+   08:01   0:00 grep --color=auto kubelite
+
+root@k8s-master:~# sudo ss -tulpn | grep -E '10250|10257|10259'
+tcp   LISTEN 0      4096        127.0.0.1:10259      0.0.0.0:*    users:(("kube-scheduler",pid=211403,fd=4))
+tcp   LISTEN 0      4096        127.0.0.1:10257      0.0.0.0:*    users:(("kube-controller",pid=211363,fd=4))
+tcp   LISTEN 0      4096                *:10250            *:*    users:(("kubelet",pid=211516,fd=20))
+
+
+again run
+root@k8s-master:~# sudo kubeadm init --apiserver-advertise-address=192.168.40.131 --pod-network-cidr=10.244.0.0/16
+Your Kubernetes control-plane has initialized successfully!
+
+To start using your cluster, you need to run the following as a regular user:
+
+  mkdir -p $HOME/.kube                                       #It makes a hidden .kube directory in your home folder to store settings.
+  sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config   #It moves the master configuration file (the "key" to the cluster) into that folder.
+  sudo chown $(id -u):$(id -g) $HOME/.kube/config            #It changes the file's permissions so you (the current user) can run commands without using sudo every time
+
+Alternatively, if you are the root user, you can run:
+
+  export KUBECONFIG=/etc/kubernetes/admin.conf
+
+You should now deploy a pod network to the cluster.
+Run "kubectl apply -f [podnetwork].yaml" with one of the options listed at:
+  https://kubernetes.io/docs/concepts/cluster-administration/addons/
+
+Then you can join any number of worker nodes by running the following on each as root:
+
+kubeadm join 192.168.40.131:6443 --token 99h8kn.gxm6jzy09tqkwsdd \
+        --discovery-token-ca-cert-hash sha256:9ebf92fbb73231851355edee841294776d4286504102539823ca91fb4d6bb52f
+
+
+Incase, If your old token is not working and if you want make token again 
+root@k8s-master:~# kubeadm token create --print-join-command
+
+Configure kubectl (MASTER only)
+root@k8s-master:~# mkdir -p $HOME/.kube
+root@k8s-master:~# sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+root@k8s-master:~# sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+
+STEP 5: Install Network Plugin (Calico):
+root@k8s-master:~# kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+
+
+What this command means
+kubeadm join 192.168.40.131:6443 \
+--token 58ww9t.oy64u1mizgefhpde \
+--discovery-token-ca-cert-hash sha256:18245f8f7fcda443d5e86f387e8b93ba64dab8ce88c977a3c9b76300cfb45752
+Breakdown:
+192.168.40.131:6443 → Kubernetes API server (MASTER)
+--token ... → temporary authentication token
+--discovery-token-ca-cert-hash ... → security fingerprint (prevents fake clusters)
+
+WHERE TO RUN IT:
+ssh root@192.168.40.132
+sudo kubeadm join 192.168.40.131:6443 \
+--token 58ww9t.oy64u1mizgefhpde \
+--discovery-token-ca-cert-hash sha256:18245f8f7fcda443d5e86f387e8b93ba64dab8ce88c977a3c9b76300cfb45752
+
+
+
+
+Node1:
+=====
+root@node1u:~# sudo kubeadm join 192.168.40.131:6443 --token 58ww9t.oy64u1mizgefhpde --discovery-token-ca-cert-hash sha256:18245f8f7fcda443d5e86f387e8b93ba64dab8ce88                                                      c977a3c9b76300cfb45752
+[preflight] Running pre-flight checks
+[preflight] Some fatal errors occurred:
+
+root@node1u:~# sudo lsof -i :10250
+COMMAND    PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+kubelet 253984 root   16u  IPv6 666960      0t0  TCP *:10250 (LISTEN)
+root@node1u:~# sudo systemctl stop kubelet
+root@node1u:~# sudo systemctl disable kubelet
+
+root@node1u:~# sudo pkill kubelet
+root@node1u:~# sudo lsof -i :10250
+root@node1u:~# sudo kubeadm join 192.168.40.131:6443 --token 58ww9t.oy64u1mizgefhpde --discovery-token-ca-cert-hash sha256:18245f8f7fcda443d5e86f387e8b93ba64dab8ce88                                                      c977a3c9b76300cfb45752
+[preflight] Running pre-flight checks
+        [WARNING Service-kubelet]: kubelet service is not enabled, please run 's                                                      ystemctl enable kubelet.service'
+[preflight] Some fatal errors occurred:
+        [ERROR FileAvailable--etc-kubernetes-kubelet.conf]: /etc/kubernetes/kube                                                      let.conf already exists
+error: error execution phase preflight: preflight checks failed
+
+root@node1u:~# sudo kubeadm reset -f
+The reset process does not perform cleanup of CNI plugin configuration,
+network filtering rules and kubeconfig files.
+
+root@node1u:~# sudo rm -rf /etc/kubernetes/
+sudo rm -rf /var/lib/kubelet/
+sudo rm -rf /var/lib/etcd/
+sudo rm -rf /etc/cni/net.d/
+sudo rm -rf /opt/cni/bin/
+root@node1u:~# sudo systemctl daemon-reload
+sudo systemctl restart containerd
+root@node1u:~# sudo systemctl enable kubelet
+Created symlink /etc/systemd/system/multi-user.target.wants/kubelet.service → /usr/lib/systemd/system/kubelet.service.
+root@node1u:~# sudo lsof -i :10250
+root@node1u:~# sudo kubeadm join 192.168.40.131:6443 \
+--token 58ww9t.oy64u1mizgefhpde \
+--discovery-token-ca-cert-hash sha256:18245f8f7fcda443d5e86f387e8b93ba64dab8ce88c977a3c9b76300cfb45752
+This node has joined the cluster:
+* Certificate signing request was sent to apiserver and a response was received.
+* The Kubelet was informed of the new secure connection details.
+
+
+
+Node2:
+=====
+STEP 1: TURN OFF SWAP (VERY IMPORTANT)
+root@node2u:~# sudo swapoff -a
+
+Then permanently disable:
+root@node2u:~# sudo sed -i '/ swap / s/^/#/' /etc/fstab
+root@node2u:~# vim /etc/fstab
+
+STEP 2:ENABLE REQUIRED KERNEL MODULES:
+
+root@node2u:~# sudo modprobe overlay
+root@node2u:~# sudo modprobe br_netfilter
+root@node2u:~# cat <<EOF | sudo tee /etc/modules-load.d/k8s.conf
+overlay
+br_netfilter
+EOF
+
+
+STEP 3: SET SYSCTL SETTINGS
+root@node2u:~# cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-iptables = 1
+net.bridge.bridge-nf-call-ip6tables = 1
+net.ipv4.ip_forward = 1
+EOF
+
+root@node2u:~# sudo sysctl --system
+
+
+STEP 4: FIX CONTAINERD (VERY IMPORTANT)
+root@node2u:~# sudo mkdir -p /etc/containerd
+containerd config default | sudo tee /etc/containerd/config.toml
+
+Now edit:
+root@node2u:~# sudo vim /etc/containerd/config.toml
+
+Find this line:
+SystemdCgroup = false
+
+👉 Change to:
+SystemdCgroup = true
+
+:wq!
+
+restert the system:
+root@node2u:~# sudo systemctl restart containerd
+root@node2u:~# sudo systemctl enable containerd
+
+STEP 5: ENABLE KUBELET PROPERLY
+root@node2u:~# sudo systemctl daemon-reload
+root@node2u:~# sudo systemctl enable kubelet
+root@node2u:~# sudo systemctl restart kubelet
+Check status:
+root@node2u:~# systemctl status kubelet
+
+STEP 6: RESET AGAIN (clean state):
+root@node2u:~# sudo kubeadm reset -f
+
+STEP 7: JOIN AGAIN:
+root@node2u:~# sudo kubeadm join 192.168.40.131:6443 \
+--token 58ww9t.oy64u1mizgefhpde \
+--discovery-token-ca-cert-hash sha256:18245f8f7fcda443d5e86f387e8b93ba64dab8ce88c977a3c9b76300cfb45752
+
+
+AFTER FIX SUCCESS:
+root@k8s-master:~# kubectl get nodes
+NAME         STATUS   ROLES           AGE     VERSION
+k8s-master   Ready    control-plane   5h52m   v1.35.3
+node1u       Ready    <none>          4h18m   v1.35.3
+node2u       Ready    <none>          3h52m   v1.35.3
+
+This command lists the core system processes (Pods) that run your Kubernetes cluster.
+root@k8s-master:~# kubectl get pods -n kube-system
+NAME                                      READY   STATUS    RESTARTS      AGE
+calico-kube-controllers-984995b45-c62g4   1/1     Running   0             5h26m
+calico-node-4zg4f                         1/1     Running   0             3h59m
+calico-node-7wbqc                         1/1     Running   1             4h25m
+calico-node-ww84z                         1/1     Running   0             5h26m
+coredns-7d764666f9-dcjck                  1/1     Running   0             5h59m
+coredns-7d764666f9-r5pnh                  1/1     Running   0             5h59m
+etcd-k8s-master                           1/1     Running   0             5h59m
+kube-apiserver-k8s-master                 1/1     Running   0             5h59m
+kube-controller-manager-k8s-master        1/1     Running   2 (37m ago)   5h59m
+kube-proxy-lv4qw                          1/1     Running   0             5h59m
+kube-proxy-nfzmv                          1/1     Running   1             4h25m
+kube-proxy-t2xmf                          1/1     Running   0             3h59m
+kube-scheduler-k8s-master                 1/1     Running   2 (37m ago)   5h59m
+
+to see in deatils
+This command gives you the full status of your cluster's machines.
+oot@k8s-master:~# kubectl get nodes -o wide
+NAME         STATUS   ROLES           AGE     VERSION   INTERNAL-IP      EXTERNAL-IP   OS-IMAGE           KERNEL-VERSION      CONTAINER-RUNTIME
+k8s-master   Ready    control-plane   6h17m   v1.35.3   192.168.40.131   <none>        Ubuntu 24.04 LTS   6.8.0-101-generic   containerd://2.2.1
+node1u       Ready    <none>          4h43m   v1.35.3   192.168.40.132   <none>        Ubuntu 24.04 LTS   6.8.0-101-generic   containerd://2.2.1
+node2u       Ready    <none>          4h18m   v1.35.3   192.168.40.133   <none>        Ubuntu 24.04 LTS   6.8.0-101-generic   containerd://2.2.1
+
+To check kubernetes cluster smoothly working or not
+root@k8s-master:~# kubectl get pod -n kube-system
+NAME                                      READY   STATUS    RESTARTS      AGE
+calico-kube-controllers-984995b45-c62g4   1/1     Running   0             5h50m
+calico-node-4zg4f                         1/1     Running   0             4h24m
+calico-node-7wbqc                         1/1     Running   1             4h49m
+calico-node-ww84z                         1/1     Running   0             5h50m
+coredns-7d764666f9-dcjck                  1/1     Running   0             6h23m
+coredns-7d764666f9-r5pnh                  1/1     Running   0             6h23m
+etcd-k8s-master                           1/1     Running   0             6h23m
+kube-apiserver-k8s-master                 1/1     Running   0             6h23m
+kube-controller-manager-k8s-master        1/1     Running   2 (62m ago)   6h23m
+kube-proxy-lv4qw                          1/1     Running   0             6h23m
+kube-proxy-nfzmv                          1/1     Running   1             4h49m
+kube-proxy-t2xmf                          1/1     Running   0             4h24m
+kube-scheduler-k8s-master                 1/1     Running   2 (62m ago)   6h23m
+
+After setupnig cluster first task is to enable autosuggestion of kubernetes bash command
+root@k8s-master:~# source <(kubectl completion bash)
+root@k8s-master:~# echo "source <(kubectl completion bash)" >> ~/.bashrc
+
+
+You can also use a shorthand alias for kubectl that also works with completion:
+root@k8s-master:~# vim .bashrc
+add:
+alias k=kubectl
+complete -o default -F __start_kubectl k
+
+:wq!
+
+refresh .bashrc
+root@k8s-master:~# source .bashrc
+
+root@k8s-master:~# k get pods -n kube-system
+NAME                                      READY   STATUS    RESTARTS      AGE
+calico-kube-controllers-984995b45-c62g4   1/1     Running   0             6h
+calico-node-4zg4f                         1/1     Running   0             4h34m
+calico-node-7wbqc                         1/1     Running   1             4h59m
+calico-node-ww84z                         1/1     Running   0             6h
+coredns-7d764666f9-dcjck                  1/1     Running   0             6h33m
+coredns-7d764666f9-r5pnh                  1/1     Running   0             6h33m
+etcd-k8s-master                           1/1     Running   0             6h33m
+kube-apiserver-k8s-master                 1/1     Running   0             6h33m
+kube-controller-manager-k8s-master        1/1     Running   2 (72m ago)   6h33m
+kube-proxy-lv4qw                          1/1     Running   0             6h33m
+kube-proxy-nfzmv                          1/1     Running   1             4h59m
+kube-proxy-t2xmf                          1/1     Running   0             4h34m
+kube-scheduler-k8s-master                 1/1     Running   2 (72m ago)   6h33m
+
+root@k8s-master:~# k get ns               here ns = name space
+NAME              STATUS   AGE
+default           Active   6h38m
+kube-node-lease   Active   6h38m
+kube-public       Active   6h38m
+kube-system       Active   6h38m
+
+what component are running in kube system name space
+root@k8s-master:~# k get all -n kube-system
+NAME                                          READY   STATUS    RESTARTS      AGE
+pod/calico-kube-controllers-984995b45-c62g4   1/1     Running   0             6h8m
+pod/calico-node-4zg4f                         1/1     Running   0             4h41m
+pod/calico-node-7wbqc                         1/1     Running   1             5h7m
+pod/calico-node-ww84z                         1/1     Running   0             6h8m
+pod/coredns-7d764666f9-dcjck                  1/1     Running   0             6h41m
+pod/coredns-7d764666f9-r5pnh                  1/1     Running   0             6h41m
+pod/etcd-k8s-master                           1/1     Running   0             6h41m
+pod/kube-apiserver-k8s-master                 1/1     Running   0             6h41m
+pod/kube-controller-manager-k8s-master        1/1     Running   2 (79m ago)   6h41m
+pod/kube-proxy-lv4qw                          1/1     Running   0             6h41m
+pod/kube-proxy-nfzmv                          1/1     Running   1             5h7m
+pod/kube-proxy-t2xmf                          1/1     Running   0             4h41m
+pod/kube-scheduler-k8s-master                 1/1     Running   2 (79m ago)   6h41m
+
+NAME               TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)                  AGE
+service/kube-dns   ClusterIP   10.96.0.10   <none>        53/UDP,53/TCP,9153/TCP   6h41m
+
+NAME                         DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+daemonset.apps/calico-node   3         3         3       3            3           kubernetes.io/os=linux   6h8m
+daemonset.apps/kube-proxy    3         3         3       3            3           kubernetes.io/os=linux   6h41m
+
+NAME                                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/calico-kube-controllers   1/1     1            1           6h8m
+deployment.apps/coredns                   2/2     2            2           6h41m
+
+NAME                                                DESIRED   CURRENT   READY   AGE
+replicaset.apps/calico-kube-controllers-984995b45   1         1         1       6h8m
+replicaset.apps/coredns-7d764666f9                  2         2         2       6h41m
+
+which pods are running in  kube system name space
+root@k8s-master:~# k -n kube-system get pod
+NAME                                      READY   STATUS    RESTARTS      AGE
+calico-kube-controllers-984995b45-c62g4   1/1     Running   0             6h12m
+calico-node-4zg4f                         1/1     Running   0             4h46m
+calico-node-7wbqc                         1/1     Running   1             5h11m
+calico-node-ww84z                         1/1     Running   0             6h12m
+coredns-7d764666f9-dcjck                  1/1     Running   0             6h45m
+coredns-7d764666f9-r5pnh                  1/1     Running   0             6h45m
+etcd-k8s-master                           1/1     Running   0             6h45m
+kube-apiserver-k8s-master                 1/1     Running   0             6h45m
+kube-controller-manager-k8s-master        1/1     Running   2 (84m ago)   6h45m
+kube-proxy-lv4qw                          1/1     Running   0             6h45m
+kube-proxy-nfzmv                          1/1     Running   1             5h11m
+kube-proxy-t2xmf                          1/1     Running   0             4h46m
+kube-scheduler-k8s-master                 1/1     Running   2 (83m ago)   6h45m
+
+Lets create a pod:
+root@k8s-master:~# kubectl run nginx-pod --image=nginx
+pod/nginx-pod created
+
+To check get is creted or not
+root@k8s-master:~# kubectl get pod
+NAME        READY   STATUS              RESTARTS   AGE
+nginx-pod   0/1     ContainerCreating   0          25s
+
+To check get is creted or not in details
+root@k8s-master:~# kubectl get pod -o wide
+NAME        READY   STATUS    RESTARTS   AGE   IP            NODE     NOMINATED NODE   READINESS GATES
+nginx-pod   1/1     Running   0          56s   10.244.98.1   node1u   <none>           <none>
+
+
+to see the full details of the pod
+root@k8s-master:~# kubectl describe pod nginx-pod
+Name:             nginx-pod
+Namespace:        default
+Priority:         0
+Service Account:  default
+Node:             node1u/192.168.40.132
+Start Time:       Tue, 14 Apr 2026 14:56:16 +0000
+Labels:           run=nginx-pod
+
+
+Now if we want to see description of pod of anther name space for example:
+root@k8s-master:~# kubectl -n kube-system describe pod kube-apiserver-k8s-master
+Name:                 kube-apiserver-k8s-master
+Namespace:            kube-system
+Priority:             2000001000
+Priority Class Name:  system-node-critical
+Node:                 k8s-master/192.168.40.131
+Start Time:           Tue, 14 Apr 2026 08:03:00 +0000
+Labels:               component=kube-apiserver
+                      tier=control-plane
+
+Now if want creat a new name space
+root@k8s-master:~# kubectl create namespace webapp
+namespace/webapp created
+root@k8s-master:~# kubectl get ns
+NAME              STATUS   AGE
+default           Active   7h7m
+kube-node-lease   Active   7h7m
+kube-public       Active   7h7m
+kube-system       Active   7h7m
+webapp            Active   30s
+
+we can create a pod in different name space
+root@k8s-master:~# kubectl run nginx-pod-webapp --image=nginx --namespace=webapp
+pod/nginx-pod-webapp created
+
+can check which pod is running inside webapp name space
+root@k8s-master:~# kubectl get pod -n webapp
+NAME               READY   STATUS    RESTARTS   AGE
+nginx-pod-webapp   1/1     Running   0          102s
+
